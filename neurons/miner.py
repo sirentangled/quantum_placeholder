@@ -1,164 +1,172 @@
-# The MIT License (MIT)
-# Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
-
-# Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
-# the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
-# and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
-
-# The above copyright notice and this permission notice shall be included in all copies or substantial portions of
-# the Software.
-
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
-# THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-# THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-# DEALINGS IN THE SOFTWARE.
-
 import time
 import typing
 import bittensor as bt
 
-# Bittensor Miner Template:
-import template
-
-# import base miner class which takes care of most of the boilerplate
-from template.base.miner import BaseMinerNeuron
+import qubittensor
+from qubittensor.base.miner import BaseMinerNeuron
+from qubittensor.protocol import ChallengeCircuits, CompletedCircuits
 
 
 class Miner(BaseMinerNeuron):
     """
-    Your miner neuron class. You should use this class to define your miner's behavior. In particular, you should replace the forward function with your own logic. You may also want to override the blacklist and priority functions according to your needs.
-
-    This class inherits from the BaseMinerNeuron class, which in turn inherits from BaseNeuron. The BaseNeuron class takes care of routine tasks such as setting up wallet, subtensor, metagraph, logging directory, parsing config, etc. You can override any of the methods in BaseNeuron if you need to customize the behavior.
-
-    This class provides reasonable default behavior for a miner such as blacklisting unrecognized hotkeys, prioritizing requests based on stake, and forwarding requests to the forward function. If you need to define custom
+    Receive circuit challenges, solve them, and return the completed circuit.
     """
 
     def __init__(self, config=None):
         super(Miner, self).__init__(config=config)
+        bt.logging.info("Miner initialized and ready to receive circuit challenges.")
 
-        # TODO(developer): Anything specific to your use case you can do here
 
     async def forward(
-        self, synapse: template.protocol.Dummy
-    ) -> template.protocol.Dummy:
+        self, synapse: ChallengeCircuits
+    ) -> CompletedCircuits:
         """
-        Processes the incoming 'Dummy' synapse by performing a predefined operation on the input data.
-        This method should be replaced with actual logic relevant to the miner's purpose.
+        Processes the incoming 'ChallengeCircuits' synapse.
+        The miner will:
+        1. Verify the validator's signature on the challenge.
+        2. Solve the circuit provided in `synapse.circuit_data`.
+        3. Compute the solution hash.
+        4. Populate a `CompletedCircuits` synapse with the results and return it.
 
         Args:
-            synapse (template.protocol.Dummy): The synapse object containing the 'dummy_input' data.
+            synapse (ChallengeCircuits): The incoming synapse containing the circuit challenge.
 
         Returns:
-            template.protocol.Dummy: The synapse object with the 'dummy_output' field set to twice the 'dummy_input' value.
-
-        The 'forward' function is a placeholder and should be overridden with logic that is appropriate for
-        the miner's intended operation. This method demonstrates a basic transformation of input data.
+            CompletedCircuits: The synapse object with the solved circuit details.
         """
-        # TODO(developer): Replace with actual implementation logic.
-        synapse.dummy_output = synapse.dummy_input * 2
-        return synapse
+        bt.logging.info(f"Received ChallengeCircuits from validator: {synapse.dendrite.hotkey}")
+        bt.logging.debug(f"Challenge details: {synapse.circuit_data}, Difficulty: {synapse.difficulty_level}")
+
+        # --- 1. Verify the validator's signature on the challenge ---
+        validator_hotkey_address = synapse.dendrite.hotkey
+
+        # Re-create the hash of the challenge content as the validator would have done.
+        temp_challenge_for_hash = ChallengeCircuits(
+            circuit_data=synapse.circuit_data,
+            solution_hash=synapse.solution_hash,
+            difficulty_level=synapse.difficulty_level,
+            # Do NOT include validator_signature when hashing for verification
+            validator_signature=None
+        )
+        challenge_content_hash_for_verification = temp_challenge_for_hash.get_serializable_hash()
+
+        received_validator_signature = synapse.validator_signature
+
+        signature_is_valid = False
+        if received_validator_signature:
+            try:
+                signature_is_valid = bt.verify_signature(
+                    ss58_address=validator_hotkey_address,
+                    message_hash=challenge_content_hash_for_verification,
+                    signature=bytes.fromhex(received_validator_signature)
+                )
+            except Exception as e:
+                bt.logging.error(f"Error verifying validator signature: {e}")
+                signature_is_valid = False
+        else:
+            bt.logging.warning("No validator signature provided in the challenge.")
+
+        if not signature_is_valid:
+            bt.logging.warning(f"Invalid or missing validator signature from {validator_hotkey_address}. Rejecting challenge.")
+            # If the signature is invalid, the miner should ideally not process the challenge
+            # or return an empty/error response. For this example, we'll return a default
+            # CompletedCircuits indicating failure.
+            return CompletedCircuits(
+                validator_signature=received_validator_signature, # Return the invalid signature for validator to check
+                circuit_data=synapse.circuit_data,
+                solution_hash="", # Indicate no solution was produced
+                difficulty_level=synapse.difficulty_level
+            )
+        
+        bt.logging.info("Validator signature verified successfully.")
+
+        # --- 2. Solve the circuit ---
+        # TODO(developer): Replace this with your actual circuit solving logic.
+        # This is where your miner's "work" happens.
+        bt.logging.info(f"Solving circuit: {synapse.circuit_data}...")
+        try:
+            # Simulate solving the circuit
+            time.sleep(1) # Simulate computation time
+            solved_result = "8" # This should be the actual output of your circuit solver
+            
+            # --- 3. Compute the solution hash ---
+            miner_solution_hash = bt.hash(solved_result).hexdigest()
+            bt.logging.info(f"Circuit solved. Miner's solution hash: {miner_solution_hash}")
+
+        except Exception as e:
+            bt.logging.error(f"Error solving circuit: {e}")
+            # If solving fails, return an empty solution hash
+            miner_solution_hash = ""
+
+        # --- 4. Populate a CompletedCircuits synapse and return it ---
+        # The miner fills in the empty fields of the CompletedCircuits synapse.
+        # Importantly, the miner must return the *original* validator_signature
+        # received in the challenge, as this allows the validator to trace the
+        # solved circuit back to its origin and perform further verification.
+        response_synapse = CompletedCircuits(
+            validator_signature=synapse.validator_signature, # Return the validator's original signature
+            circuit_data=synapse.circuit_data,              # Return the original circuit data for context
+            solution_hash=miner_solution_hash,              # The hash of the miner's solution
+            difficulty_level=synapse.difficulty_level       # Return the original difficulty
+        )
+
+        bt.logging.info("CompletedCircuits synapse prepared and returned.")
+        return response_synapse
 
     async def blacklist(
-        self, synapse: template.protocol.Dummy
+        self, synapse: ChallengeCircuits
     ) -> typing.Tuple[bool, str]:
         """
-        Determines whether an incoming request should be blacklisted and thus ignored. Your implementation should
-        define the logic for blacklisting requests based on your needs and desired security parameters.
-
-        Blacklist runs before the synapse data has been deserialized (i.e. before synapse.data is available).
-        The synapse is instead contracted via the headers of the request. It is important to blacklist
-        requests before they are deserialized to avoid wasting resources on requests that will be ignored.
-
-        Args:
-            synapse (template.protocol.Dummy): A synapse object constructed from the headers of the incoming request.
-
-        Returns:
-            Tuple[bool, str]: A tuple containing a boolean indicating whether the synapse's hotkey is blacklisted,
-                            and a string providing the reason for the decision.
-
-        This function is a security measure to prevent resource wastage on undesired requests. It should be enhanced
-        to include checks against the metagraph for entity registration, validator status, and sufficient stake
-        before deserialization of synapse data to minimize processing overhead.
-
-        Example blacklist logic:
-        - Reject if the hotkey is not a registered entity within the metagraph.
-        - Consider blacklisting entities that are not validators or have insufficient stake.
-
-        In practice it would be wise to blacklist requests from entities that are not validators, or do not have
-        enough stake. This can be checked via metagraph.S and metagraph.validator_permit. You can always attain
-        the uid of the sender via a metagraph.hotkeys.index( synapse.dendrite.hotkey ) call.
-
-        Otherwise, allow the request to be processed further.
+        Determines whether an incoming request should be blacklisted.
+        This is crucial for security and resource management.
         """
-
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
-            bt.logging.warning(
-                "Received a request without a dendrite or hotkey."
-            )
+            bt.logging.warning("Received a request without a dendrite or hotkey.")
             return True, "Missing dendrite or hotkey"
 
-        # TODO(developer): Define how miners should blacklist requests.
-        uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
-        if (
-            not self.config.blacklist.allow_non_registered
-            and synapse.dendrite.hotkey not in self.metagraph.hotkeys
-        ):
-            # Ignore requests from un-registered entities.
+        # Get the UID of the sender
+        try:
+            # This can raise ValueError if the hotkey is not found in metagraph
+            uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        except ValueError:
             bt.logging.trace(
                 f"Blacklisting un-registered hotkey {synapse.dendrite.hotkey}"
             )
             return True, "Unrecognized hotkey"
 
-        if self.config.blacklist.force_validator_permit:
-            # If the config is set to force validator permit, then we should only allow requests from validators.
-            if not self.metagraph.validator_permit[uid]:
-                bt.logging.warning(
-                    f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
-                )
-                return True, "Non-validator hotkey"
+        # Check if the sender is a validator (optional, but common for challenge-response)
+        if not self.metagraph.validator_permit[uid]:
+            bt.logging.warning(
+                f"Blacklisting a request from non-validator hotkey {synapse.dendrite.hotkey}"
+            )
+            return True, "Non-validator hotkey"
+
+        # You might also add logic here to blacklist if the validator's stake is too low,
+        # or if the `synapse.difficulty_level` is outside an acceptable range.
+        # e.g., if synapse.difficulty_level > MAX_ACCEPTABLE_DIFFICULTY: return True, "Too difficult"
 
         bt.logging.trace(
-            f"Not Blacklisting recognized hotkey {synapse.dendrite.hotkey}"
+            f"Not blacklisting recognized and permitted hotkey {synapse.dendrite.hotkey} (UID: {uid})"
         )
-        return False, "Hotkey recognized!"
+        return False, "Hotkey recognized and permitted!"
 
-    async def priority(self, synapse: template.protocol.Dummy) -> float:
+    async def priority(self, synapse: ChallengeCircuits) -> float:
         """
-        The priority function determines the order in which requests are handled. More valuable or higher-priority
-        requests are processed before others. You should design your own priority mechanism with care.
-
-        This implementation assigns priority to incoming requests based on the calling entity's stake in the metagraph.
-
-        Args:
-            synapse (template.protocol.Dummy): The synapse object that contains metadata about the incoming request.
-
-        Returns:
-            float: A priority score derived from the stake of the calling entity.
-
-        Miners may receive messages from multiple entities at once. This function determines which request should be
-        processed first. Higher values indicate that the request should be processed first. Lower values indicate
-        that the request should be processed later.
-
-        Example priority logic:
-        - A higher stake results in a higher priority value.
+        The priority function determines the order in which requests are handled.
+        Higher values indicate that the request should be processed first.
         """
         if synapse.dendrite is None or synapse.dendrite.hotkey is None:
-            bt.logging.warning(
-                "Received a request without a dendrite or hotkey."
-            )
+            bt.logging.warning("Received a request without a dendrite or hotkey.")
             return 0.0
 
-        # TODO(developer): Define how miners should prioritize requests.
-        caller_uid = self.metagraph.hotkeys.index(
-            synapse.dendrite.hotkey
-        )  # Get the caller index.
-        priority = float(
-            self.metagraph.S[caller_uid]
-        )  # Return the stake as the priority.
+        try:
+            caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        except ValueError:
+            # Should ideally be caught by blacklist, but a fallback for unregistered hotkeys
+            return 0.0
+
+        # Prioritize based on the validator's stake. Higher stake = higher priority.
+        priority = float(self.metagraph.S[caller_uid])
         bt.logging.trace(
             f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}"
         )
