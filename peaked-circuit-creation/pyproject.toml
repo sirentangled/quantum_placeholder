@@ -1,0 +1,39 @@
+[project]
+name = "peaked-circuit-gen"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+
+## from peaked_circuits/requirements.txt
+requires-python = ">= 3.12"
+dependencies = [
+    "torch==2.2.1",
+    "quimb==1.7.3",
+    "scipy==1.11.2",
+    "matplotlib==3.8.3",
+    "numba==0.59.1",
+    "torch_optimizer==0.3.0",
+    "tqdm==4.66.2",
+    "pytest==8.1.1",
+    # uv: distutils was removed from stdlib in Python 3.12, so use a version of
+    # numpy that doesn't depend on it
+    "numpy>1.23.5",
+    # add these dependencies based on warnings from cotengra re hyperoptimizers
+    "kahypar>=1.3.5",
+    "optuna>=4.3.0",
+]
+
+## auto from uv
+# requires-python = ">=3.9"
+# dependencies = [
+#     "cotengra>=0.7.4",
+#     "kahypar>=1.3.5",
+#     "matplotlib>=3.9.4",
+#     "numba>=0.53.1",
+#     "numpy==1.23.5",
+#     "optuna>=4.3.0",
+#     "quimb>=1.11.0",
+#     "scipy>=1.13.1",
+#     "stim>=1.15.0",
+#     "torch>=2.7.1",
+# ]
