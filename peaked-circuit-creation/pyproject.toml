@@ -37,3 +37,11 @@ dependencies = [
 #     "stim>=1.15.0",
 #     "torch>=2.7.1",
 # ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["peaked_circuits", "prototyping"]
+
