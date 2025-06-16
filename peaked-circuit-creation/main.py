@@ -1,10 +1,15 @@
-from lib.circuit_gen import CircuitParams
+import torch
+from lib.circuit_gen import CircuitParams, DEVICE
 
 def main():
-    # example, please change this to whatever you need to do this in a nice
-    # automated fashion
-    difficulty_level = 1.0 # min
-    seed = 1054 # whatever
+    # This is for debug
+    if DEVICE == 'cuda':
+        print(f"Using GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        print("Using CPU")
+    
+    difficulty_level = 1.0
+    seed = 1054
     circuit_params = CircuitParams.from_difficulty(difficulty_level)
     print(f"qubits: {circuit_params.nqubits}")
     print(f"rqc depth: {circuit_params.rqc_depth}")
@@ -21,3 +26,4 @@ if __name__ == "__main__":
 
 # 0.0: 001101001111
 # 1.0: 0011010011110000011111
+# with gpu: 1010110011110100001011, seed 1054, diff 1.0

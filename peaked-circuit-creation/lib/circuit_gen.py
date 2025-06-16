@@ -74,8 +74,16 @@ import quimb as qu
 from peaked_circuits.functions import *
 import torch
 import cotengra as ctg
+import os
 
-# the following is an optimizer for speeding up tensor network contractions
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+if DEVICE == 'cuda':
+    qtn.set_contract_backend('torch')
+    print("[DEBUG] contract backend: GPU")
+else:
+    qtn.set_contract_backend('numpy')
+    print("[DEBUG] contract backend: CPU")
+
 opti = ctg.ReusableHyperOptimizer(
     progbar=True,
     methods=["greedy"],
@@ -92,6 +100,12 @@ def loss_fn(psi_tar, psi):
     # compute the total energy, here quimb handles constructing and contracting
     # all the appropriate lightcones
     return -abs((psi_tar.H & psi).contract(all, optimize=opti)) ** 2
+
+# Helper to convert arrays to torch on the correct device
+def to_torch(x):
+    if isinstance(x, torch.Tensor):
+        return x.to(device=DEVICE, dtype=torch.complex128)
+    return torch.tensor(x, dtype=torch.complex128, device=DEVICE)
 
 class TNModel(torch.nn.Module):
     def __init__(self, tn, psi_tar):
@@ -269,11 +283,17 @@ def make_circuit(
         psi_tar = psi_2.copy()
         for i in range(L):
             psi_tar = psi_tar & psi_pqc.tensors[i]
-        psi.apply_to_arrays(lambda x: torch.tensor(x, dtype=torch.complex128))
-        psi_tar.apply_to_arrays(lambda x: torch.tensor(x, dtype=torch.complex128))
-        psi_2.apply_to_arrays(lambda x: torch.tensor(x, dtype=torch.complex128))
+        # We convert to torch arrays on device here
+        if DEVICE == 'cuda':
+            psi.apply_to_arrays(to_torch)
+            psi_tar.apply_to_arrays(to_torch)
+            psi_2.apply_to_arrays(to_torch)
 
+        # Model has to be moved to same device as tensors
         model = TNModel(psi, psi_tar)
+        if DEVICE == 'cuda':
+            model = model.cuda()
+            
         model()
         import warnings
         from torch import optim
@@ -306,6 +326,7 @@ def make_circuit(
             if step > 100 and torch.abs(previous_loss - loss) < 1e-10:
                 print("Early stopping loss difference is smaller than 1e-10")
                 break
+            previous_loss = loss
         dictionary = save_para(psi)
         peak_weights.append(-loss_fn(psi_tar, norm_fn(psi)))
 
@@ -313,6 +334,16 @@ def make_circuit(
     ### the peaking circuit, and the final probability of the target state
     psi_tar = psi_tar
     psi = norm_fn(psi)
+
+    # we convert back to numpy and send to cpu
+    if DEVICE == 'cuda':
+        def to_numpy(x):
+            if isinstance(x, torch.Tensor):
+                return x.cpu().numpy()
+            return x
+        psi_tar.apply_to_arrays(to_numpy)
+        psi.apply_to_arrays(to_numpy)
+    
     rqc_tensors = list(psi_tar.tensors[L : len(psi_tar.tensors) - L])
     pqc_tensors = list(psi.tensors)
     target_weight = float(peak_weights[-1])
