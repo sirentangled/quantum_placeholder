@@ -76,8 +76,16 @@ import torch
 import cotengra as ctg
 import os
 
-DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
-if DEVICE == 'cuda':
+# Auto-detect device cuda = nvidia gpu, mps = apple 
+if torch.cuda.is_available():
+    DEVICE = 'cuda'
+elif torch.backends.mps.is_available():
+    DEVICE = 'mps'
+else:
+    DEVICE = 'cpu'
+    
+# Configure backend for GPU if available
+if DEVICE in ['cuda', 'mps']:
     qtn.set_contract_backend('torch')
     print("[DEBUG] contract backend: GPU")
 else:
@@ -284,7 +292,7 @@ def make_circuit(
         for i in range(L):
             psi_tar = psi_tar & psi_pqc.tensors[i]
         # We convert to torch arrays on device here
-        if DEVICE == 'cuda':
+        if DEVICE in ['cuda', 'mps']:
             psi.apply_to_arrays(to_torch)
             psi_tar.apply_to_arrays(to_torch)
             psi_2.apply_to_arrays(to_torch)
@@ -293,6 +301,8 @@ def make_circuit(
         model = TNModel(psi, psi_tar)
         if DEVICE == 'cuda':
             model = model.cuda()
+        elif DEVICE == 'mps':
+            model = model.to('mps')
             
         model()
         import warnings
@@ -336,7 +346,7 @@ def make_circuit(
     psi = norm_fn(psi)
 
     # we convert back to numpy and send to cpu
-    if DEVICE == 'cuda':
+    if DEVICE in ['cuda', 'mps']:
         def to_numpy(x):
             if isinstance(x, torch.Tensor):
                 return x.cpu().numpy()
