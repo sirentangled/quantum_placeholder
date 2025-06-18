@@ -5,8 +5,6 @@ def main():
     # This is for debug
     if DEVICE == 'cuda':
         print(f"Using GPU: {torch.cuda.get_device_name(0)}")
-    elif DEVICE == 'mps':
-        print("Using GPU: Apple Metal Performance Shaders")
     else:
         print("Using CPU")
     
