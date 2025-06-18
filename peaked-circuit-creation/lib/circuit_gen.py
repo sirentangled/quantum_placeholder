@@ -77,12 +77,11 @@ import cotengra as ctg
 import os
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+qtn.set_contract_backend('torch')
 if DEVICE == 'cuda':
-    qtn.set_contract_backend('torch')
-    print("[DEBUG] contract backend: GPU")
+    print("[DEBUG] Using GPU with torch contract backend")
 else:
-    qtn.set_contract_backend('numpy')
-    print("[DEBUG] contract backend: CPU")
+    print("[DEBUG] Using CPU with torch contract backend")
 
 opti = ctg.ReusableHyperOptimizer(
     progbar=True,
@@ -244,6 +243,8 @@ def make_circuit(
         canon="left",
         seed_init=seed,
     )
+    psi_2.apply_to_arrays(to_torch)
+    
     depth_initial, depth_final, depth_step = 1, pqc_depth + 1, 1 # PQC depth
     peak_weights = list()
 
@@ -260,6 +261,9 @@ def make_circuit(
             rand=True,
             seed_init=seed,
         )
+        # We convert psi_pqc to torch tensors
+        psi_pqc.apply_to_arrays(to_torch)
+        
         ### `psi_pqc.tensors[L:]` are all the gates that do the peaking;
         ### `psi_pqc.tensors[:L]` encode the targeted computational state
         psi = psi_pqc.tensors[L]
@@ -283,16 +287,10 @@ def make_circuit(
         psi_tar = psi_2.copy()
         for i in range(L):
             psi_tar = psi_tar & psi_pqc.tensors[i]
-        # We convert to torch arrays on device here
-        if DEVICE == 'cuda':
-            psi.apply_to_arrays(to_torch)
-            psi_tar.apply_to_arrays(to_torch)
-            psi_2.apply_to_arrays(to_torch)
-
-        # Model has to be moved to same device as tensors
+        # We have to convert to torch arrays on device, even with cpu
+        psi.apply_to_arrays(to_torch)
+        # Model will auto be on the right device
         model = TNModel(psi, psi_tar)
-        if DEVICE == 'cuda':
-            model = model.cuda()
             
         model()
         import warnings
@@ -336,13 +334,12 @@ def make_circuit(
     psi = norm_fn(psi)
 
     # we convert back to numpy and send to cpu
-    if DEVICE == 'cuda':
-        def to_numpy(x):
-            if isinstance(x, torch.Tensor):
-                return x.cpu().numpy()
-            return x
-        psi_tar.apply_to_arrays(to_numpy)
-        psi.apply_to_arrays(to_numpy)
+    def to_numpy(x):
+        if hasattr(x, 'cpu'):
+            return x.cpu().numpy()
+        return x
+    psi_tar.apply_to_arrays(to_numpy)
+    psi.apply_to_arrays(to_numpy)
     
     rqc_tensors = list(psi_tar.tensors[L : len(psi_tar.tensors) - L])
     pqc_tensors = list(psi.tensors)
